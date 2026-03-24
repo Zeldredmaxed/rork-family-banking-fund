@@ -1,19 +1,10 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
 
 /**
- * API Base URL Configuration
- *
- * For physical device testing on your local network, change LAN_IP to
- * your machine's LAN IP, e.g.: '192.168.1.100'
+ * API Base URL — Railway Production
  */
-const LAN_IP = '10.0.0.23';
-
-const API_BASE_URL = Platform.select({
-  android: 'http://10.0.2.2:8000',
-  default: `http://${LAN_IP}:8000`,
-})!;
+const API_BASE_URL = 'https://web-production-085b1.up.railway.app';
 
 const TOKEN_KEY = 'auth_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
