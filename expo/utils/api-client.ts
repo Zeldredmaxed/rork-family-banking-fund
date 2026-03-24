@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
  * For physical device testing on your local network, change LAN_IP to
  * your machine's LAN IP, e.g.: '192.168.1.100'
  */
-const LAN_IP = 'localhost';
+const LAN_IP = '10.0.0.23';
 
 const API_BASE_URL = Platform.select({
   android: 'http://10.0.2.2:8000',
