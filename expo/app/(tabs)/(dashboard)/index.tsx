@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,37 +20,12 @@ import {
   Clipboard,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, getInitials, getCreditScoreLabel } from '@/utils/formatters';
 import { BUSINESS_RULES } from '@/constants/business-rules';
-import { LoanApplication, Announcement } from '@/types';
-
-const MOCK_LOANS: LoanApplication[] = [
-  {
-    id: 1,
-    type: 'standard',
-    amount: 8500,
-    status: 'active',
-    interest_tier: 2,
-    monthly_payment: 284,
-    submitted: '2025-10-12',
-    purpose: 'Vehicle Loan',
-    remaining_balance: 5525,
-    next_payment_date: '2026-04-01',
-    repayment_progress: 35,
-  },
-];
-
-const MOCK_ANNOUNCEMENTS: Announcement[] = [
-  {
-    id: 1,
-    title: 'Board Meeting — Apr 15, 2026 at 7:00 PM',
-    message: 'Formal attendance is mandatory for all primary members to discuss Q2 portfolio shifts.',
-    created_at: '2026-03-20',
-    type: 'meeting',
-  },
-];
+import api from '@/utils/api-client';
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
@@ -57,6 +33,39 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // ─── Real API Queries ───────────────────────────────────────────
+
+  const { data: requestsData, refetch: refetchRequests } = useQuery({
+    queryKey: ['my-requests'],
+    queryFn: async () => {
+      const res = await api.get('/api/requests/my-requests');
+      return res.data;
+    },
+    enabled: !!user,
+  });
+
+  const { data: notificationsData, refetch: refetchNotifications } = useQuery({
+    queryKey: ['notifications-recent'],
+    queryFn: async () => {
+      const res = await api.get('/api/notifications/');
+      return res.data;
+    },
+    enabled: !!user,
+  });
+
+  // Extract active loans from the requests response
+  const activeLoans = (requestsData?.loan_applications ?? []).filter(
+    (l: any) => l.status === 'active' || l.status === 'pending'
+  );
+
+  // Extract recent announcements from notifications
+  const announcements = (notificationsData?.notifications ?? []).slice(0, 3);
+
+  // Unread notification count
+  const unreadCount = (notificationsData?.notifications ?? []).filter(
+    (n: any) => !n.is_read
+  ).length;
 
   useEffect(() => {
     Animated.parallel([
@@ -77,18 +86,22 @@ export default function DashboardScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await refreshProfile();
+    await Promise.all([
+      refreshProfile(),
+      refetchRequests(),
+      refetchNotifications(),
+    ]);
     setRefreshing(false);
-  }, [refreshProfile]);
+  }, [refreshProfile, refetchRequests, refetchNotifications]);
 
-  const totalContributed = user?.total_contributed ?? 4800;
+  const totalContributed = user?.total_contributed ?? 0;
   const loanThreshold = BUSINESS_RULES.LOAN_ACCESS_THRESHOLD;
   const progressPct = Math.min(totalContributed / loanThreshold, 1);
-  const creditScore = user?.credit_score ?? 742;
+  const creditScore = user?.credit_score ?? 0;
   const creditLabel = getCreditScoreLabel(creditScore);
-  const firstName = user?.first_name ?? 'Marcus';
-  const lastName = user?.last_name ?? 'Johnson';
-  const initials = getInitials(firstName, lastName);
+  const firstName = user?.first_name ?? '';
+  const lastName = user?.last_name ?? '';
+  const initials = getInitials(firstName || '?', lastName || '?');
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 1],
@@ -122,14 +135,18 @@ export default function DashboardScreen() {
                 <Text style={styles.avatarText}>{initials}</Text>
               </View>
               <Text style={styles.welcomeText}>
-                Welcome Back, <Text style={styles.nameText}>{firstName}</Text>
+                Welcome Back, <Text style={styles.nameText}>{firstName || 'Member'}</Text>
               </Text>
             </View>
             <TouchableOpacity style={styles.bellButton}>
               <Bell size={22} color={Colors.accentGold} />
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>3</Text>
-              </View>
+              {unreadCount > 0 && (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -137,7 +154,7 @@ export default function DashboardScreen() {
             <View style={styles.statCard}>
               <Text style={styles.statLabel}>CONTRIBUTIONS</Text>
               <Text style={styles.statValue}>{formatCurrency(totalContributed)}</Text>
-              <Text style={styles.statSub}>of {formatCurrency(12000)} buy-in</Text>
+              <Text style={styles.statSub}>of {formatCurrency(loanThreshold)} buy-in</Text>
               <View style={styles.miniProgress}>
                 <Animated.View style={[styles.miniProgressFill, { width: progressWidth }]} />
               </View>
@@ -145,12 +162,18 @@ export default function DashboardScreen() {
             <View style={styles.statCard}>
               <View style={styles.creditHeader}>
                 <Text style={styles.statLabel}>CREDIT SCORE</Text>
-                <View style={[styles.creditBadge, { backgroundColor: creditLabel.color }]}>
-                  <Text style={styles.creditBadgeText}>{creditLabel.label}</Text>
-                </View>
+                {creditScore > 0 && (
+                  <View style={[styles.creditBadge, { backgroundColor: creditLabel.color }]}>
+                    <Text style={styles.creditBadgeText}>{creditLabel.label}</Text>
+                  </View>
+                )}
               </View>
-              <Text style={styles.statValue}>{creditScore}</Text>
-              <Text style={styles.statSub}>Last checked: Mar 15</Text>
+              <Text style={styles.statValue}>{creditScore || '—'}</Text>
+              <Text style={styles.statSub}>
+                {user?.credit_report_date
+                  ? `Last checked: ${new Date(user.credit_report_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                  : 'Not yet reported'}
+              </Text>
             </View>
           </View>
 
@@ -177,43 +200,69 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           </View>
 
-          {MOCK_LOANS.map((loan) => (
-            <View key={loan.id} style={styles.loanCard}>
-              <View style={styles.loanHeader}>
-                <View>
-                  <Text style={styles.loanTitle}>{loan.purpose}</Text>
-                  <Text style={styles.loanSub}>
-                    Next payment: {loan.next_payment_date ? new Date(loan.next_payment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
-                  </Text>
-                </View>
-                <View style={styles.loanAmountCol}>
-                  <Text style={styles.loanAmount}>{formatCurrency(loan.amount)}</Text>
-                  <Text style={styles.loanMonthly}>{formatCurrency(loan.monthly_payment)}/MO</Text>
-                </View>
-              </View>
-              <View style={styles.repaymentRow}>
-                <Text style={styles.repaymentLabel}>REPAYMENT PROGRESS</Text>
-                <Text style={styles.repaymentPct}>{loan.repayment_progress}%</Text>
-              </View>
-              <View style={styles.repaymentBar}>
-                <View style={[styles.repaymentFill, { width: `${loan.repayment_progress ?? 0}%` as unknown as number }]} />
-              </View>
+          {activeLoans.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No active loans</Text>
+              <Text style={styles.emptySub}>Apply for a loan from the Requests tab</Text>
             </View>
-          ))}
+          ) : (
+            activeLoans.map((loan: any) => (
+              <View key={loan.id} style={styles.loanCard}>
+                <View style={styles.loanHeader}>
+                  <View>
+                    <Text style={styles.loanTitle}>
+                      {loan.purpose || `${loan.type} Loan`}
+                    </Text>
+                    <Text style={styles.loanSub}>
+                      Status: {loan.status.toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.loanAmountCol}>
+                    <Text style={styles.loanAmount}>{formatCurrency(loan.amount)}</Text>
+                    <Text style={styles.loanMonthly}>
+                      {formatCurrency(loan.monthly_payment)}/MO
+                    </Text>
+                  </View>
+                </View>
+                {loan.repayment_progress != null && (
+                  <>
+                    <View style={styles.repaymentRow}>
+                      <Text style={styles.repaymentLabel}>REPAYMENT PROGRESS</Text>
+                      <Text style={styles.repaymentPct}>{loan.repayment_progress}%</Text>
+                    </View>
+                    <View style={styles.repaymentBar}>
+                      <View
+                        style={[
+                          styles.repaymentFill,
+                          { width: `${loan.repayment_progress ?? 0}%` as unknown as number },
+                        ]}
+                      />
+                    </View>
+                  </>
+                )}
+              </View>
+            ))
+          )}
 
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Announcements</Text>
 
-          {MOCK_ANNOUNCEMENTS.map((a) => (
-            <View key={a.id} style={styles.announcementCard}>
-              <View style={styles.announcementIcon}>
-                <Clipboard size={20} color={Colors.accentGold} />
-              </View>
-              <View style={styles.announcementContent}>
-                <Text style={styles.announcementTitle}>{a.title}</Text>
-                <Text style={styles.announcementMsg}>{a.message}</Text>
-              </View>
+          {announcements.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No announcements</Text>
             </View>
-          ))}
+          ) : (
+            announcements.map((a: any) => (
+              <View key={a.id} style={styles.announcementCard}>
+                <View style={styles.announcementIcon}>
+                  <Clipboard size={20} color={Colors.accentGold} />
+                </View>
+                <View style={styles.announcementContent}>
+                  <Text style={styles.announcementTitle}>{a.title}</Text>
+                  <Text style={styles.announcementMsg}>{a.message}</Text>
+                </View>
+              </View>
+            ))
+          )}
 
           <View style={styles.promoCard}>
             <LinearGradient
@@ -399,6 +448,25 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: Colors.accentGold,
     letterSpacing: 0.5,
+  },
+  emptyCard: {
+    backgroundColor: Colors.bgSecondary,
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  emptyText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  emptySub: {
+    fontSize: 13,
+    color: Colors.textTertiary,
+    marginTop: 4,
   },
   loanCard: {
     backgroundColor: Colors.bgSecondary,

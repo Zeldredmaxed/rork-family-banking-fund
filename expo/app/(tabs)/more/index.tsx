@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,19 +27,23 @@ import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { getInitials, formatDate } from '@/utils/formatters';
+import api from '@/utils/api-client';
+import { useMutation } from '@tanstack/react-query';
 
 export default function MoreScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, logout } = useAuth();
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
 
-  const firstName = user?.first_name ?? 'Marcus';
-  const lastName = user?.last_name ?? 'Johnson';
-  const initials = getInitials(firstName, lastName);
-  const isBoardMember = user?.is_board_member ?? true;
-  const joinDate = user?.join_date ? formatDate(user.join_date) : 'January 2024';
-  const email = user?.email ?? 'marcus@family.com';
+  const firstName = user?.first_name ?? '';
+  const lastName = user?.last_name ?? '';
+  const initials = getInitials(firstName || '?', lastName || '?');
+  const isBoardMember = user?.is_board_member ?? false;
+  const joinDate = user?.join_date ? formatDate(user.join_date) : 'N/A';
+  const email = user?.email ?? '';
 
   const handleLogout = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -131,28 +136,13 @@ export default function MoreScreen() {
         </TouchableOpacity>
 
         {showChangePassword && (
-          <View style={styles.passwordForm}>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="Current Password"
-              placeholderTextColor={Colors.textTertiary}
-              secureTextEntry
-            />
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="New Password"
-              placeholderTextColor={Colors.textTertiary}
-              secureTextEntry
-            />
-            <TouchableOpacity activeOpacity={0.8}>
-              <LinearGradient
-                colors={[Colors.accentGold, Colors.accentGoldDark]}
-                style={styles.passwordSubmit}
-              >
-                <Text style={styles.passwordSubmitText}>UPDATE PASSWORD</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
+          <ChangePasswordForm
+            currentPassword={currentPassword}
+            setCurrentPassword={setCurrentPassword}
+            newPassword={newPassword}
+            setNewPassword={setNewPassword}
+            onHide={() => setShowChangePassword(false)}
+          />
         )}
 
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.7}>
@@ -162,6 +152,85 @@ export default function MoreScreen() {
         <Text style={styles.versionText}>INSTITUTIONAL WEALTH PROTOCOL</Text>
         <Text style={styles.versionNumber}>v2.0.0</Text>
       </ScrollView>
+    </View>
+  );
+}
+
+function ChangePasswordForm({
+  currentPassword,
+  setCurrentPassword,
+  newPassword,
+  setNewPassword,
+  onHide,
+}: {
+  currentPassword: string;
+  setCurrentPassword: (v: string) => void;
+  newPassword: string;
+  setNewPassword: (v: string) => void;
+  onHide: () => void;
+}) {
+  const changePwMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/api/auth/change-password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      Alert.alert('Success', 'Your password has been changed.');
+      setCurrentPassword('');
+      setNewPassword('');
+      onHide();
+    },
+    onError: (error: any) => {
+      const detail = error.response?.data?.detail ?? 'Failed to change password.';
+      Alert.alert('Error', detail);
+    },
+  });
+
+  const handleSubmit = () => {
+    if (!currentPassword.trim() || !newPassword.trim()) {
+      Alert.alert('Missing Fields', 'Please fill in both fields.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      Alert.alert('Weak Password', 'New password must be at least 6 characters.');
+      return;
+    }
+    changePwMutation.mutate();
+  };
+
+  return (
+    <View style={styles.passwordForm}>
+      <TextInput
+        style={styles.passwordInput}
+        placeholder="Current Password"
+        placeholderTextColor={Colors.textTertiary}
+        secureTextEntry
+        value={currentPassword}
+        onChangeText={setCurrentPassword}
+      />
+      <TextInput
+        style={styles.passwordInput}
+        placeholder="New Password"
+        placeholderTextColor={Colors.textTertiary}
+        secureTextEntry
+        value={newPassword}
+        onChangeText={setNewPassword}
+      />
+      <TouchableOpacity activeOpacity={0.8} onPress={handleSubmit} disabled={changePwMutation.isPending}>
+        <LinearGradient
+          colors={[Colors.accentGold, Colors.accentGoldDark]}
+          style={styles.passwordSubmit}
+        >
+          {changePwMutation.isPending ? (
+            <ActivityIndicator color={Colors.bgPrimary} />
+          ) : (
+            <Text style={styles.passwordSubmitText}>UPDATE PASSWORD</Text>
+          )}
+        </LinearGradient>
+      </TouchableOpacity>
     </View>
   );
 }

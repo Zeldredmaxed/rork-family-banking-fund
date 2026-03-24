@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 import createContextHook from '@nkzw/create-context-hook';
-import api, { storeTokens, clearTokens } from '@/utils/api-client';
+import api, { setToken, setRefreshToken, clearTokens } from '@/utils/api-client';
 import { MemberProfile, AuthTokens } from '@/types';
 
 export const [AuthProvider, useAuth] = createContextHook(() => {
@@ -42,7 +42,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       return response.data as AuthTokens;
     },
     onSuccess: async (data) => {
-      await storeTokens(data.access_token, data.refresh_token);
+      await setToken(data.access_token);
+      await setRefreshToken(data.refresh_token);
       await SecureStore.setItemAsync('member_id', String(data.member_id));
       await SecureStore.setItemAsync('member_name', data.name);
       await SecureStore.setItemAsync('is_board_member', String(data.is_board_member));
@@ -64,7 +65,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       return response.data as AuthTokens;
     },
     onSuccess: async (data) => {
-      await storeTokens(data.access_token, data.refresh_token);
+      await setToken(data.access_token);
+      await setRefreshToken(data.refresh_token);
       await SecureStore.setItemAsync('member_id', String(data.member_id));
       await SecureStore.setItemAsync('member_name', data.name);
       const meResponse = await api.get('/api/auth/me');
@@ -92,6 +94,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   return useMemo(() => ({
     isAuthenticated,
     isLoading,
+    isLoadingProfile: isLoading,
     user,
     login: loginMutation.mutateAsync,
     loginError: loginMutation.error,

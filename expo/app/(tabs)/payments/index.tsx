@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   RefreshControl,
   Animated,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,25 +17,54 @@ import {
   CheckCircle,
   TrendingUp,
   Clock,
+  DollarSign,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, formatDate } from '@/utils/formatters';
-import { PaymentHistoryItem } from '@/types';
-
-const MOCK_HISTORY: PaymentHistoryItem[] = [
-  { id: 1, type: 'contribution', amount: 250, date: '2026-03-01', status: 'completed', notes: 'Monthly Contribution' },
-  { id: 2, type: 'contribution', amount: 250, date: '2026-02-01', status: 'completed', notes: 'Monthly Contribution' },
-  { id: 3, type: 'contribution', amount: 250, date: '2026-01-01', status: 'completed', notes: 'Monthly Contribution' },
-  { id: 4, type: 'contribution', amount: 250, date: '2025-12-01', status: 'completed', notes: 'Monthly Contribution' },
-];
+import api from '@/utils/api-client';
 
 export default function PaymentsScreen() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // ─── Real API queries ─────────────────────────────────────────
+
+  const {
+    data: historyData,
+    isLoading: historyLoading,
+    refetch: refetchHistory,
+  } = useQuery({
+    queryKey: ['payment-history'],
+    queryFn: async () => {
+      const res = await api.get('/api/payments/history');
+      return res.data;
+    },
+    enabled: !!user,
+  });
+
+  const {
+    data: upcomingData,
+    isLoading: upcomingLoading,
+    refetch: refetchUpcoming,
+  } = useQuery({
+    queryKey: ['upcoming-payments'],
+    queryFn: async () => {
+      const res = await api.get('/api/payments/upcoming');
+      return res.data;
+    },
+    enabled: !!user,
+  });
+
+  const payments = historyData?.payments ?? [];
+  const totalContributed = historyData?.total_contributed ?? user?.total_contributed ?? 0;
+  const upcomingPayments = upcomingData?.upcoming_payments ?? [];
+  const contributionUpcoming = upcomingPayments.find((p: any) => p.type === 'contribution');
+  const loanUpcoming = upcomingPayments.filter((p: any) => p.type === 'loan_payment');
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -42,13 +73,39 @@ export default function PaymentsScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await new Promise(r => setTimeout(r, 1000));
+    await Promise.all([
+      refreshProfile(),
+      refetchHistory(),
+      refetchUpcoming(),
+    ]);
     setRefreshing(false);
-  }, []);
+  }, [refreshProfile, refetchHistory, refetchUpcoming]);
 
   const monthlyContribution = user?.monthly_contribution ?? 250;
-  const totalPaid = user?.total_contributed ?? 4800;
-  const remaining = 12000 - totalPaid;
+  const hasAutoPay = contributionUpcoming?.auto_pay === true;
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed':
+      case 'paid':
+        return <CheckCircle size={16} color={Colors.success} />;
+      case 'pending':
+        return <Clock size={16} color={Colors.warning} />;
+      default:
+        return <DollarSign size={16} color={Colors.textSecondary} />;
+    }
+  };
+
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'contribution':
+        return 'Monthly Contribution';
+      case 'loan_payment':
+        return 'Loan Repayment';
+      default:
+        return 'Payment';
+    }
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -64,13 +121,14 @@ export default function PaymentsScreen() {
         contentContainerStyle={styles.scrollContent}
       >
         <Animated.View style={{ opacity: fadeAnim }}>
+          {/* Subscription Status Card */}
           <View style={styles.mainCard}>
             <View style={styles.mainCardHeader}>
               <View>
                 <Text style={styles.statusLabel}>STATUS</Text>
                 <View style={styles.activeBadge}>
-                  <View style={styles.activeDot} />
-                  <Text style={styles.activeText}>ACTIVE</Text>
+                  <View style={[styles.activeDot, { backgroundColor: hasAutoPay ? Colors.success : Colors.warning }]} />
+                  <Text style={styles.activeText}>{hasAutoPay ? 'AUTO-PAY' : 'MANUAL'}</Text>
                 </View>
               </View>
               <View style={styles.amountCol}>
@@ -81,65 +139,96 @@ export default function PaymentsScreen() {
               </View>
             </View>
 
-            <View style={styles.nextPaymentRow}>
-              <CalendarDays size={18} color={Colors.accentGold} />
-              <View style={styles.nextPaymentText}>
-                <Text style={styles.nextPaymentLabel}>NEXT PAYMENT</Text>
-                <Text style={styles.nextPaymentDate}>April 1, 2026</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
-            >
-              <LinearGradient
-                colors={[Colors.accentGold, Colors.accentGoldDark]}
-                style={styles.autoPayButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
+            {!hasAutoPay && (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  Alert.alert(
+                    'Setup Auto-Pay',
+                    'Connect your payment method through Stripe to enable automatic monthly contributions.',
+                    [{ text: 'OK' }]
+                  );
+                }}
               >
-                <Text style={styles.autoPayText}>MANAGE AUTO-PAY</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={[Colors.accentGold, Colors.accentGoldDark]}
+                  style={styles.autoPayButton}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <Text style={styles.autoPayText}>SET UP AUTO-PAY</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
           </View>
 
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryLabel}>TOTAL PAID</Text>
-              <View style={styles.summaryValueRow}>
-                <Text style={styles.summaryValue}>{formatCurrency(totalPaid)}</Text>
-                <TrendingUp size={14} color={Colors.success} />
-              </View>
+          {/* Upcoming Payments */}
+          {loanUpcoming.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>Upcoming Loan Payments</Text>
+              {loanUpcoming.map((p: any, i: number) => (
+                <View key={i} style={styles.upcomingCard}>
+                  <View style={styles.upcomingRow}>
+                    <CalendarDays size={18} color={Colors.accentGold} />
+                    <View style={styles.upcomingTextCol}>
+                      <Text style={styles.upcomingLabel}>
+                        Due: {formatDate(p.due_date)}
+                      </Text>
+                      <Text style={styles.upcomingNote}>
+                        Payment #{p.payment_number} · {p.remaining_payments} remaining
+                      </Text>
+                    </View>
+                    <Text style={styles.upcomingAmount}>{formatCurrency(p.amount)}</Text>
+                  </View>
+                </View>
+              ))}
+            </>
+          )}
+
+          {/* Stats Row */}
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <TrendingUp size={22} color={Colors.accentGold} />
+              <Text style={styles.statValue}>{formatCurrency(totalContributed)}</Text>
+              <Text style={styles.statLabel}>TOTAL PAID</Text>
             </View>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryLabel}>REMAINING</Text>
-              <View style={styles.summaryValueRow}>
-                <Text style={styles.summaryValue}>{formatCurrency(remaining)}</Text>
-                <Clock size={14} color={Colors.accentGold} />
-              </View>
+            <View style={styles.statCard}>
+              <CalendarDays size={22} color={Colors.accentGold} />
+              <Text style={styles.statValue}>{payments.length}</Text>
+              <Text style={styles.statLabel}>TRANSACTIONS</Text>
             </View>
           </View>
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Payments</Text>
-            <TouchableOpacity>
-              <Text style={styles.viewAllText}>VIEW ALL</Text>
-            </TouchableOpacity>
-          </View>
+          {/* Payment History */}
+          <Text style={styles.sectionTitle}>Payment History</Text>
 
-          {MOCK_HISTORY.map((payment) => (
-            <View key={payment.id} style={styles.paymentItem}>
-              <View style={styles.paymentIcon}>
-                <CheckCircle size={20} color={Colors.success} />
-              </View>
-              <View style={styles.paymentInfo}>
-                <Text style={styles.paymentTitle}>{payment.notes || 'Monthly Contribution'}</Text>
-                <Text style={styles.paymentDate}>{formatDate(payment.date)}</Text>
-              </View>
-              <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
+          {historyLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color={Colors.accentGold} />
             </View>
-          ))}
+          ) : payments.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No payment history yet</Text>
+              <Text style={styles.emptySub}>Contributions will appear here once processed</Text>
+            </View>
+          ) : (
+            payments.map((p: any) => (
+              <View key={`${p.type}-${p.id}`} style={styles.historyItem}>
+                <View style={styles.historyIcon}>{getStatusIcon(p.status)}</View>
+                <View style={styles.historyContent}>
+                  <Text style={styles.historyTitle}>{getTypeLabel(p.type)}</Text>
+                  <Text style={styles.historyDate}>{formatDate(p.date)}</Text>
+                </View>
+                <View style={styles.historyAmountCol}>
+                  <Text style={styles.historyAmount}>{formatCurrency(p.amount)}</Text>
+                  <Text style={[styles.historyStatus, { color: p.status === 'completed' || p.status === 'paid' ? Colors.success : Colors.warning }]}>
+                    {p.status.toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
         </Animated.View>
       </ScrollView>
     </View>
@@ -153,33 +242,38 @@ const styles = StyleSheet.create({
   },
   screenHeader: {
     paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingVertical: 16,
   },
   screenTitle: {
-    fontSize: 24,
-    fontWeight: '700' as const,
-    color: Colors.accentGold,
+    fontSize: 26,
+    fontWeight: '700',
+    color: Colors.textPrimary,
   },
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 32,
   },
+  loadingContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
   mainCard: {
     backgroundColor: Colors.bgSecondary,
-    borderRadius: 20,
-    padding: 22,
+    borderRadius: 18,
+    padding: 20,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   mainCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    alignItems: 'flex-start',
+    marginBottom: 16,
   },
   statusLabel: {
     fontSize: 10,
-    fontWeight: '600' as const,
+    fontWeight: '600',
     color: Colors.textSecondary,
     letterSpacing: 1,
     marginBottom: 6,
@@ -187,21 +281,21 @@ const styles = StyleSheet.create({
   activeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
     gap: 6,
+    backgroundColor: 'rgba(0,200,83,0.08)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: Colors.success,
   },
   activeText: {
     fontSize: 11,
-    fontWeight: '700' as const,
+    fontWeight: '700',
     color: Colors.success,
     letterSpacing: 0.5,
   },
@@ -210,141 +304,156 @@ const styles = StyleSheet.create({
   },
   amountLabel: {
     fontSize: 10,
-    fontWeight: '600' as const,
+    fontWeight: '600',
     color: Colors.textSecondary,
     letterSpacing: 1,
     marginBottom: 4,
   },
   amountValue: {
-    fontSize: 28,
-    fontWeight: '700' as const,
+    fontSize: 26,
+    fontWeight: '700',
     color: Colors.accentGold,
   },
   amountUnit: {
     fontSize: 14,
-    fontWeight: '500' as const,
+    fontWeight: '400',
     color: Colors.textSecondary,
-  },
-  nextPaymentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: Colors.glassBg,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  nextPaymentText: {
-    flex: 1,
-  },
-  nextPaymentLabel: {
-    fontSize: 10,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-    letterSpacing: 0.8,
-  },
-  nextPaymentDate: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: Colors.textPrimary,
-    marginTop: 2,
   },
   autoPayButton: {
-    borderRadius: 14,
-    height: 50,
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
-    justifyContent: 'center',
+    marginTop: 8,
   },
   autoPayText: {
+    fontWeight: '700',
     fontSize: 14,
-    fontWeight: '700' as const,
     color: Colors.bgPrimary,
-    letterSpacing: 1.2,
+    letterSpacing: 1,
   },
-  summaryRow: {
+  upcomingCard: {
+    backgroundColor: Colors.bgSecondary,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 12,
+  },
+  upcomingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  upcomingTextCol: {
+    flex: 1,
+  },
+  upcomingLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  upcomingNote: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  upcomingAmount: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.accentGold,
+  },
+  statsRow: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 28,
+    marginBottom: 24,
   },
-  summaryCard: {
+  statCard: {
     flex: 1,
     backgroundColor: Colors.bgSecondary,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
     borderColor: Colors.border,
+    alignItems: 'center',
+    gap: 8,
   },
-  summaryLabel: {
+  statValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  statLabel: {
     fontSize: 10,
-    fontWeight: '600' as const,
+    fontWeight: '600',
     color: Colors.textSecondary,
     letterSpacing: 1,
-    marginBottom: 8,
-  },
-  summaryValueRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  summaryValue: {
-    fontSize: 22,
-    fontWeight: '700' as const,
-    color: Colors.accentGold,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '700' as const,
+    fontWeight: '700',
     color: Colors.textPrimary,
+    marginBottom: 12,
   },
-  viewAllText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: Colors.accentGold,
-    letterSpacing: 0.5,
-  },
-  paymentItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  emptyCard: {
     backgroundColor: Colors.bgSecondary,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 8,
+    borderRadius: 16,
+    padding: 24,
     borderWidth: 1,
     borderColor: Colors.border,
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  paymentIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+  emptyText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  emptySub: {
+    fontSize: 13,
+    color: Colors.textTertiary,
+    marginTop: 4,
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  historyIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: Colors.bgSecondary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
   },
-  paymentInfo: {
+  historyContent: {
     flex: 1,
   },
-  paymentTitle: {
-    fontSize: 14,
-    fontWeight: '600' as const,
+  historyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
     color: Colors.textPrimary,
   },
-  paymentDate: {
+  historyDate: {
     fontSize: 12,
     color: Colors.textSecondary,
     marginTop: 2,
   },
-  paymentAmount: {
+  historyAmountCol: {
+    alignItems: 'flex-end',
+  },
+  historyAmount: {
     fontSize: 16,
-    fontWeight: '600' as const,
+    fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  historyStatus: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginTop: 2,
   },
 });

@@ -1,78 +1,76 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
-const API_BASE_URL = 'http://localhost:8000';
+/**
+ * API Base URL Configuration
+ *
+ * For physical device testing on your local network, change LAN_IP to
+ * your machine's LAN IP, e.g.: '192.168.1.100'
+ */
+const LAN_IP = 'localhost';
+
+const API_BASE_URL = Platform.select({
+  android: 'http://10.0.2.2:8000',
+  default: `http://${LAN_IP}:8000`,
+})!;
+
+const TOKEN_KEY = 'auth_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-async function getToken(): Promise<string | null> {
-  try {
-    return await SecureStore.getItemAsync('access_token');
-  } catch {
-    console.log('Failed to get token from SecureStore');
-    return null;
-  }
+// ─── Token Management ──────────────────────────────────────────────
+
+export async function getToken(): Promise<string | null> {
+  return SecureStore.getItemAsync(TOKEN_KEY);
 }
 
-async function getRefreshToken(): Promise<string | null> {
-  try {
-    return await SecureStore.getItemAsync('refresh_token');
-  } catch {
-    return null;
-  }
+export async function setToken(token: string): Promise<void> {
+  await SecureStore.setItemAsync(TOKEN_KEY, token);
 }
 
-async function storeTokens(accessToken: string, refreshToken: string): Promise<void> {
-  try {
-    await SecureStore.setItemAsync('access_token', accessToken);
-    await SecureStore.setItemAsync('refresh_token', refreshToken);
-  } catch {
-    console.log('Failed to store tokens');
-  }
+export async function getRefreshToken(): Promise<string | null> {
+  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
 }
 
-async function clearTokens(): Promise<void> {
-  try {
-    await SecureStore.deleteItemAsync('access_token');
-    await SecureStore.deleteItemAsync('refresh_token');
-    await SecureStore.deleteItemAsync('member_id');
-    await SecureStore.deleteItemAsync('member_name');
-    await SecureStore.deleteItemAsync('is_board_member');
-  } catch {
-    console.log('Failed to clear tokens');
-  }
+export async function setRefreshToken(token: string): Promise<void> {
+  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token);
 }
+
+export async function clearTokens(): Promise<void> {
+  await SecureStore.deleteItemAsync(TOKEN_KEY);
+  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+}
+
+// ─── Request Interceptor ───────────────────────────────────────────
+
+api.interceptors.request.use(
+  async (config) => {
+    const token = await getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error),
+);
+
+// ─── Response Interceptor (401 refresh) ─────────────────────────────
 
 let isRefreshing = false;
-let failedQueue: Array<{
-  resolve: (value: unknown) => void;
-  reject: (reason?: unknown) => void;
-}> = [];
+let refreshSubscribers: Array<(token: string) => void> = [];
 
-function processQueue(error: unknown, token: string | null = null) {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve(token);
-    }
-  });
-  failedQueue = [];
+function onRefreshed(token: string) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
 }
-
-api.interceptors.request.use(async (config) => {
-  const token = await getToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
 
 api.interceptors.response.use(
   (response) => response,
@@ -81,11 +79,11 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        }).then((token) => {
-          originalRequest.headers.Authorization = `Bearer ${String(token)}`;
-          return api(originalRequest);
+        return new Promise((resolve) => {
+          refreshSubscribers.push((token: string) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            resolve(api(originalRequest));
+          });
         });
       }
 
@@ -103,24 +101,26 @@ api.interceptors.response.use(
           refresh_token: refreshToken,
         });
 
-        const { access_token, refresh_token } = response.data;
-        await storeTokens(access_token, refresh_token);
-        processQueue(null, access_token);
+        const { access_token, refresh_token: newRefreshToken } = response.data;
+        await setToken(access_token);
+        await setRefreshToken(newRefreshToken);
 
-        originalRequest.headers.Authorization = `Bearer ${String(access_token)}`;
+        originalRequest.headers.Authorization = `Bearer ${access_token}`;
+        onRefreshed(access_token);
+
         return api(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError, null);
         await clearTokens();
-        throw refreshError;
+        refreshSubscribers = [];
+        return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
       }
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
-export { api, getToken, getRefreshToken, storeTokens, clearTokens };
+export { API_BASE_URL };
 export default api;
