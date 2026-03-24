@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,9 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  PanResponder,
+  Animated,
+  LayoutChangeEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,17 +25,202 @@ import {
   Calculator,
   ChevronRight,
   X,
+  SlidersHorizontal,
+  CheckCircle,
+  XCircle,
+  Clock,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { formatCurrency } from '@/utils/formatters';
+import { formatCurrency, formatDate } from '@/utils/formatters';
 import { calculateMonthlyPayment } from '@/utils/formatters';
 import { BUSINESS_RULES } from '@/constants/business-rules';
 import api from '@/utils/api-client';
 
 type ModalType = 'loan' | 'emergency' | 'meeting' | null;
+
+interface InterestOption {
+  rate: number;
+  label: string;
+  tier: number;
+}
+
+const INTEREST_OPTIONS: InterestOption[] = [
+  { rate: 5, label: '5%', tier: 1 },
+  { rate: 8, label: '8%', tier: 2 },
+  { rate: 10, label: '10%', tier: 3 },
+];
+
+const TERM_OPTIONS = [12, 24, 36, 48, 60];
+
+const MIN_LOAN = 0;
+const MAX_LOAN = 1000000;
+
+type ReviewStage = 'ai_review' | 'board_review' | 'decision';
+
+function getReviewStage(loan: any): { stage: ReviewStage; approved: boolean | null } {
+  if (loan.status === 'approved' || loan.status === 'active' || loan.status === 'paid_off') {
+    return { stage: 'decision', approved: true };
+  }
+  if (loan.status === 'denied' || loan.status === 'defaulted') {
+    return { stage: 'decision', approved: false };
+  }
+  if (loan.status === 'pending') {
+    if (loan.board_votes !== undefined && loan.board_votes !== null) {
+      return { stage: 'board_review', approved: null };
+    }
+    return { stage: 'ai_review', approved: null };
+  }
+  return { stage: 'ai_review', approved: null };
+}
+
+function getProgressWidth(stage: ReviewStage): number {
+  switch (stage) {
+    case 'ai_review': return 0.2;
+    case 'board_review': return 0.6;
+    case 'decision': return 1.0;
+  }
+}
+
+function getProgressColor(stage: ReviewStage): string {
+  switch (stage) {
+    case 'ai_review': return '#ef4444';
+    case 'board_review': return '#f59e0b';
+    case 'decision': return '#22c55e';
+  }
+}
+
+function getStageLabel(stage: ReviewStage, approved: boolean | null): string {
+  switch (stage) {
+    case 'ai_review': return 'AI REVIEW';
+    case 'board_review': return 'BOARD APPROVAL';
+    case 'decision': return approved ? 'APPROVED' : 'DENIED';
+  }
+}
+
+function CustomSlider({
+  value,
+  onValueChange,
+  min,
+  max,
+}: {
+  value: number;
+  onValueChange: (v: number) => void;
+  min: number;
+  max: number;
+}) {
+  const trackWidth = useRef(0);
+  const currentValue = useRef(value);
+  const thumbPosition = useRef(new Animated.Value(0)).current;
+
+  const updateThumbFromValue = useCallback((val: number, width: number) => {
+    const ratio = Math.max(0, Math.min(1, (val - min) / (max - min)));
+    thumbPosition.setValue(ratio * width);
+  }, [min, max, thumbPosition]);
+
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    trackWidth.current = e.nativeEvent.layout.width;
+    updateThumbFromValue(currentValue.current, trackWidth.current);
+  }, [updateThumbFromValue]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt) => {
+        const x = evt.nativeEvent.locationX;
+        const ratio = Math.max(0, Math.min(1, x / trackWidth.current));
+        const newVal = Math.round((min + ratio * (max - min)) / 1000) * 1000;
+        currentValue.current = newVal;
+        thumbPosition.setValue(ratio * trackWidth.current);
+        onValueChange(newVal);
+        void Haptics.selectionAsync();
+      },
+      onPanResponderMove: (evt) => {
+        const x = evt.nativeEvent.locationX;
+        const ratio = Math.max(0, Math.min(1, x / trackWidth.current));
+        const newVal = Math.round((min + ratio * (max - min)) / 1000) * 1000;
+        if (newVal !== currentValue.current) {
+          currentValue.current = newVal;
+          onValueChange(newVal);
+        }
+        thumbPosition.setValue(ratio * trackWidth.current);
+      },
+    })
+  ).current;
+
+  const fillWidth = thumbPosition.interpolate({
+    inputRange: [0, trackWidth.current || 1],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View
+      style={sliderStyles.container}
+      onLayout={onLayout}
+      {...panResponder.panHandlers}
+    >
+      <View style={sliderStyles.track}>
+        <Animated.View
+          style={[
+            sliderStyles.fill,
+            { width: fillWidth },
+          ]}
+        />
+      </View>
+      <Animated.View
+        style={[
+          sliderStyles.thumb,
+          { transform: [{ translateX: Animated.subtract(thumbPosition, 12) }] },
+        ]}
+      >
+        <View style={sliderStyles.thumbInner} />
+      </Animated.View>
+    </View>
+  );
+}
+
+const sliderStyles = StyleSheet.create({
+  container: {
+    height: 40,
+    justifyContent: 'center',
+    position: 'relative' as const,
+  },
+  track: {
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  fill: {
+    height: '100%',
+    backgroundColor: Colors.accentGold,
+    borderRadius: 3,
+  },
+  thumb: {
+    position: 'absolute' as const,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.accentGold,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    shadowColor: Colors.accentGold,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  thumbInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#1a1a2e',
+  },
+});
 
 export default function RequestsScreen() {
   const insets = useSafeAreaInsets();
@@ -41,7 +229,10 @@ export default function RequestsScreen() {
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ─── Loan form state ───────────────────────────────────────────
+  const [calcAmount, setCalcAmount] = useState(5000);
+  const [calcRate, setCalcRate] = useState(8);
+  const [calcTerm, setCalcTerm] = useState(24);
+
   const [loanAmount, setLoanAmount] = useState('5000');
   const [loanTerm, setLoanTerm] = useState('24');
   const [loanPurpose, setLoanPurpose] = useState('');
@@ -49,15 +240,13 @@ export default function RequestsScreen() {
   const [collateralDesc, setCollateralDesc] = useState('');
   const [collateralValue, setCollateralValue] = useState('');
 
-  // ─── Emergency form state ──────────────────────────────────────
   const [emergencyAmount, setEmergencyAmount] = useState('');
   const [emergencyReason, setEmergencyReason] = useState('');
 
-  // ─── Meeting form state ────────────────────────────────────────
   const [meetingSubject, setMeetingSubject] = useState('');
   const [meetingAgenda, setMeetingAgenda] = useState('');
 
-  // ─── API Queries ───────────────────────────────────────────────
+  const [expandedRequestId, setExpandedRequestId] = useState<number | null>(null);
 
   const { data: requestsData, refetch: refetchRequests } = useQuery({
     queryKey: ['my-requests'],
@@ -70,8 +259,6 @@ export default function RequestsScreen() {
 
   const myLoans = requestsData?.loan_applications ?? [];
   const myMeetings = requestsData?.meeting_requests ?? [];
-
-  // ─── Mutations ─────────────────────────────────────────────────
 
   const loanMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -130,9 +317,12 @@ export default function RequestsScreen() {
     },
   });
 
-  // ─── Estimate calculation ──────────────────────────────────────
+  const calcPayment = useMemo(
+    () => calculateMonthlyPayment(calcAmount, calcRate, calcTerm),
+    [calcAmount, calcRate, calcTerm]
+  );
 
-  const selectedTier = BUSINESS_RULES.INTEREST_TIERS[1]; // Use tier 2 as default estimate
+  const selectedTier = BUSINESS_RULES.INTEREST_TIERS[1];
   const estimatedPayment = useMemo(
     () => calculateMonthlyPayment(parseFloat(loanAmount) || 0, selectedTier.rate, parseInt(loanTerm) || 1),
     [loanAmount, selectedTier.rate, loanTerm]
@@ -190,6 +380,35 @@ export default function RequestsScreen() {
     setRefreshing(false);
   }, [refetchRequests]);
 
+  const handleSliderChange = useCallback((val: number) => {
+    setCalcAmount(val);
+  }, []);
+
+  const handleRateSelect = useCallback((rate: number) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCalcRate(rate);
+  }, []);
+
+  const handleTermSelect = useCallback((term: number) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCalcTerm(term);
+  }, []);
+
+  const handleRequestTap = useCallback((loan: any) => {
+    const { stage, approved } = getReviewStage(loan);
+    if (stage === 'decision') {
+      void Haptics.notificationAsync(
+        approved
+          ? Haptics.NotificationFeedbackType.Success
+          : Haptics.NotificationFeedbackType.Error
+      );
+      setExpandedRequestId(expandedRequestId === loan.id ? null : loan.id);
+    } else {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setExpandedRequestId(expandedRequestId === loan.id ? null : loan.id);
+    }
+  }, [expandedRequestId]);
+
   const requestCards = [
     {
       icon: Briefcase,
@@ -224,6 +443,11 @@ export default function RequestsScreen() {
     { value: 'other', label: 'Other' },
   ];
 
+  const getTierForRate = (rate: number) => {
+    const found = INTEREST_OPTIONS.find(o => o.rate === rate);
+    return found ? found.tier : 2;
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.screenHeader}>
@@ -237,6 +461,83 @@ export default function RequestsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accentGold} />
         }
       >
+        {/* Quick Calculator Widget */}
+        <View style={styles.calcCard}>
+          <View style={styles.calcHeader}>
+            <SlidersHorizontal size={18} color={Colors.accentGold} />
+            <Text style={styles.calcHeaderText}>QUICK CALCULATOR</Text>
+          </View>
+
+          <View style={styles.calcRow}>
+            <Text style={styles.calcLabel}>Loan Amount</Text>
+            <Text style={styles.calcAmountValue}>
+              {formatCurrency(calcAmount)}
+            </Text>
+          </View>
+
+          <CustomSlider
+            value={calcAmount}
+            onValueChange={handleSliderChange}
+            min={MIN_LOAN}
+            max={MAX_LOAN}
+          />
+
+          <View style={styles.sliderLabels}>
+            <Text style={styles.sliderMinMax}>$0</Text>
+            <Text style={styles.sliderMinMax}>$1M</Text>
+          </View>
+
+          <View style={styles.calcRow}>
+            <Text style={styles.calcLabel}>Term</Text>
+            <View style={styles.termRow}>
+              {TERM_OPTIONS.map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.termPill, calcTerm === t && styles.termPillActive]}
+                  onPress={() => handleTermSelect(t)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.termPillText, calcTerm === t && styles.termPillTextActive]}>
+                    {t}mo
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.calcRow}>
+            <Text style={styles.calcLabel}>Interest Rate</Text>
+            <View style={styles.rateRow}>
+              {INTEREST_OPTIONS.map((opt) => (
+                <TouchableOpacity
+                  key={opt.rate}
+                  style={[styles.rateBubble, calcRate === opt.rate && styles.rateBubbleActive]}
+                  onPress={() => handleRateSelect(opt.rate)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.rateBubbleText, calcRate === opt.rate && styles.rateBubbleTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.calcDivider} />
+
+          <View style={styles.calcResultRow}>
+            <Text style={styles.calcResultLabel}>Est. Monthly Payment</Text>
+            <View style={styles.calcResultRight}>
+              <Text style={styles.calcResultValue}>
+                {formatCurrency(Math.round(calcPayment))}
+              </Text>
+              <Text style={styles.calcResultNote}>
+                Interest Rate: {calcRate}% (Tier {getTierForRate(calcRate)})
+              </Text>
+            </View>
+          </View>
+        </View>
+
         {/* Request Type Cards */}
         {requestCards.map((card, i) => (
           <TouchableOpacity
@@ -256,56 +557,167 @@ export default function RequestsScreen() {
           </TouchableOpacity>
         ))}
 
-        {/* My Requests History */}
-        <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Loan Applications</Text>
-        {myLoans.length === 0 ? (
+        {/* My Requests Section */}
+        <View style={styles.myRequestsHeader}>
+          <Text style={styles.sectionTitle}>MY REQUESTS</Text>
+        </View>
+
+        {myLoans.length === 0 && myMeetings.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No loan applications yet</Text>
+            <Text style={styles.emptyText}>No requests submitted yet</Text>
           </View>
         ) : (
-          myLoans.map((loan: any) => (
-            <View key={loan.id} style={styles.historyCard}>
-              <View style={styles.historyRow}>
-                <View style={styles.historyLeft}>
-                  <Text style={styles.historyTitle}>{loan.type === 'emergency' ? '🚨 Emergency' : '📋 Standard'} Loan</Text>
-                  <Text style={styles.historyMeta}>
-                    {formatCurrency(loan.amount)} · Tier {loan.interest_tier}
-                  </Text>
-                </View>
-                <View style={[
-                  styles.statusBadge,
-                  { backgroundColor: loan.status === 'active' ? 'rgba(0,200,83,0.1)' : loan.status === 'pending' ? 'rgba(255,193,7,0.1)' : 'rgba(244,67,54,0.1)' }
-                ]}>
-                  <Text style={[
-                    styles.statusText,
-                    { color: loan.status === 'active' ? Colors.success : loan.status === 'pending' ? Colors.warning : Colors.danger }
+          <>
+            {myLoans.map((loan: any) => {
+              const { stage, approved } = getReviewStage(loan);
+              const progressWidth = getProgressWidth(stage);
+              const progressColor = getProgressColor(stage);
+              const stageLabel = getStageLabel(stage, approved);
+              const isExpanded = expandedRequestId === loan.id;
+
+              return (
+                <TouchableOpacity
+                  key={loan.id}
+                  style={styles.requestProgressCard}
+                  activeOpacity={0.7}
+                  onPress={() => handleRequestTap(loan)}
+                >
+                  <View style={styles.requestProgressTop}>
+                    <View style={styles.requestProgressInfo}>
+                      <Text style={styles.requestProgressTitle}>
+                        {loan.purpose || (loan.type === 'emergency' ? 'Emergency' : 'Standard')} Loan — {formatCurrency(loan.amount)}
+                      </Text>
+                      <Text style={styles.requestProgressMeta}>
+                        Submitted {loan.submitted ? formatDate(loan.submitted) : 'Recently'}
+                      </Text>
+                    </View>
+                    <View style={[styles.stageBadge, { backgroundColor: `${progressColor}20` }]}>
+                      <Text style={[styles.stageBadgeText, { color: progressColor }]}>
+                        {stageLabel}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Progress Bar */}
+                  <View style={styles.progressBarContainer}>
+                    <View style={styles.progressTrack}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          {
+                            width: `${progressWidth * 100}%`,
+                            backgroundColor: progressColor,
+                          },
+                        ]}
+                      />
+                      {/* Stage markers */}
+                      <View style={[styles.stageMarker, { left: '20%' }]}>
+                        <View style={[
+                          styles.stageMarkerDot,
+                          { backgroundColor: progressWidth >= 0.2 ? progressColor : 'rgba(255,255,255,0.15)' }
+                        ]} />
+                      </View>
+                      <View style={[styles.stageMarker, { left: '60%' }]}>
+                        <View style={[
+                          styles.stageMarkerDot,
+                          { backgroundColor: progressWidth >= 0.6 ? progressColor : 'rgba(255,255,255,0.15)' }
+                        ]} />
+                      </View>
+                      <View style={[styles.stageMarker, { left: '100%' }]}>
+                        <View style={[
+                          styles.stageMarkerDot,
+                          { backgroundColor: progressWidth >= 1.0 ? progressColor : 'rgba(255,255,255,0.15)' }
+                        ]} />
+                      </View>
+                    </View>
+                    <View style={styles.stageLabelsRow}>
+                      <Text style={[styles.stageLabelText, progressWidth >= 0.2 && { color: '#ef4444' }]}>AI</Text>
+                      <Text style={[styles.stageLabelText, progressWidth >= 0.6 && { color: '#f59e0b' }]}>Board</Text>
+                      <Text style={[styles.stageLabelText, progressWidth >= 1.0 && { color: '#22c55e' }]}>Decision</Text>
+                    </View>
+                  </View>
+
+                  {/* Board vote info for board_review stage */}
+                  {stage === 'board_review' && (
+                    <View style={styles.boardVoteRow}>
+                      <Text style={styles.boardVoteText}>
+                        Board votes: 3 of 5 required to pass
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Expanded detail for decision stage */}
+                  {isExpanded && stage === 'decision' && (
+                    <View style={styles.decisionDetail}>
+                      <View style={styles.decisionIconRow}>
+                        {approved ? (
+                          <CheckCircle size={20} color={Colors.success} />
+                        ) : (
+                          <XCircle size={20} color={Colors.danger} />
+                        )}
+                        <Text style={[styles.decisionText, { color: approved ? Colors.success : Colors.danger }]}>
+                          {approved
+                            ? `Your loan of ${formatCurrency(loan.amount)} has been approved!`
+                            : `Your loan request of ${formatCurrency(loan.amount)} was denied.`}
+                        </Text>
+                      </View>
+                      {loan.monthly_payment && approved && (
+                        <Text style={styles.decisionMeta}>
+                          Monthly payment: {formatCurrency(loan.monthly_payment)} · Tier {loan.interest_tier}
+                        </Text>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Expanded detail for non-decision stages */}
+                  {isExpanded && stage !== 'decision' && (
+                    <View style={styles.decisionDetail}>
+                      <View style={styles.decisionIconRow}>
+                        <Clock size={18} color={Colors.accentGold} />
+                        <Text style={styles.pendingDetailText}>
+                          {stage === 'ai_review'
+                            ? 'Your request is being analyzed by our AI system. This usually takes a few minutes.'
+                            : 'Your request is awaiting board member votes. At least 3 of 5 board members must vote.'}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+
+            {myMeetings.map((m: any) => (
+              <View key={`meeting-${m.id}`} style={styles.requestProgressCard}>
+                <View style={styles.requestProgressTop}>
+                  <View style={styles.requestProgressInfo}>
+                    <Text style={styles.requestProgressTitle}>
+                      📅 {m.subject}
+                    </Text>
+                    <Text style={styles.requestProgressMeta}>
+                      {m.preferred_date ? `Preferred: ${formatDate(m.preferred_date)}` : 'Flexible date'}
+                    </Text>
+                  </View>
+                  <View style={[
+                    styles.stageBadge,
+                    { backgroundColor: m.status === 'scheduled' ? 'rgba(34,197,94,0.2)' : 'rgba(245,158,11,0.2)' }
                   ]}>
-                    {(loan.status ?? '').toUpperCase()}
-                  </Text>
+                    <Text style={[
+                      styles.stageBadgeText,
+                      { color: m.status === 'scheduled' ? Colors.success : Colors.warning }
+                    ]}>
+                      {(m.status ?? 'PENDING').toUpperCase()}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          ))
+            ))}
+          </>
         )}
 
-        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Meeting Requests</Text>
-        {myMeetings.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No meeting requests</Text>
-          </View>
-        ) : (
-          myMeetings.map((m: any) => (
-            <View key={m.id} style={styles.historyCard}>
-              <Text style={styles.historyTitle}>{m.subject}</Text>
-              <Text style={styles.historyMeta}>
-                Status: {(m.status ?? '').toUpperCase()} · {m.preferred_date ? new Date(m.preferred_date).toLocaleDateString() : 'Flexible'}
-              </Text>
-            </View>
-          ))
-        )}
+        <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* ─── Loan Application Modal ──────────────────────────────── */}
+      {/* Loan Application Modal */}
       <Modal visible={activeModal === 'loan'} animationType="slide" presentationStyle="pageSheet">
         <KeyboardAvoidingView style={styles.modalContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalHeader}>
@@ -374,7 +786,6 @@ export default function RequestsScreen() {
               placeholderTextColor={Colors.textTertiary}
             />
 
-            {/* Estimate Card */}
             <View style={styles.estimateCard}>
               <Calculator size={20} color={Colors.accentGold} />
               <View style={styles.estimateContent}>
@@ -406,7 +817,7 @@ export default function RequestsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ─── Emergency Fund Modal ────────────────────────────────── */}
+      {/* Emergency Fund Modal */}
       <Modal visible={activeModal === 'emergency'} animationType="slide" presentationStyle="pageSheet">
         <KeyboardAvoidingView style={styles.modalContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalHeader}>
@@ -463,7 +874,7 @@ export default function RequestsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ─── Meeting Request Modal ───────────────────────────────── */}
+      {/* Meeting Request Modal */}
       <Modal visible={activeModal === 'meeting'} animationType="slide" presentationStyle="pageSheet">
         <KeyboardAvoidingView style={styles.modalContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalHeader}>
@@ -518,8 +929,134 @@ export default function RequestsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bgPrimary },
   screenHeader: { paddingHorizontal: 20, paddingVertical: 16 },
-  screenTitle: { fontSize: 26, fontWeight: '700', color: Colors.textPrimary },
+  screenTitle: { fontSize: 26, fontWeight: '700' as const, color: Colors.textPrimary },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 32 },
+
+  calcCard: {
+    backgroundColor: Colors.bgSecondary,
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 20,
+  },
+  calcHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 20,
+  },
+  calcHeaderText: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: Colors.textPrimary,
+    letterSpacing: 1.2,
+  },
+  calcRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  calcLabel: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: '500' as const,
+  },
+  calcAmountValue: {
+    fontSize: 22,
+    fontWeight: '700' as const,
+    color: Colors.accentGold,
+  },
+  sliderLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  sliderMinMax: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+  },
+  termRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  termPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  termPillActive: {
+    backgroundColor: 'rgba(201, 168, 76, 0.15)',
+    borderColor: Colors.accentGold,
+  },
+  termPillText: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    fontWeight: '600' as const,
+  },
+  termPillTextActive: {
+    color: Colors.accentGold,
+  },
+  rateRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  rateBubble: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rateBubbleActive: {
+    backgroundColor: 'rgba(201, 168, 76, 0.2)',
+    borderColor: Colors.accentGold,
+  },
+  rateBubbleText: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: Colors.textTertiary,
+  },
+  rateBubbleTextActive: {
+    color: Colors.accentGold,
+  },
+  calcDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginVertical: 16,
+  },
+  calcResultRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  calcResultLabel: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: '500' as const,
+    paddingTop: 4,
+  },
+  calcResultRight: {
+    alignItems: 'flex-end',
+  },
+  calcResultValue: {
+    fontSize: 28,
+    fontWeight: '800' as const,
+    color: Colors.accentGold,
+  },
+  calcResultNote: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+
   requestCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -539,9 +1076,20 @@ const styles = StyleSheet.create({
     marginRight: 14,
   },
   requestContent: { flex: 1 },
-  requestTitle: { fontSize: 16, fontWeight: '600', color: Colors.textPrimary },
+  requestTitle: { fontSize: 16, fontWeight: '600' as const, color: Colors.textPrimary },
   requestDesc: { fontSize: 13, color: Colors.textSecondary, marginTop: 4 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: Colors.textPrimary, marginBottom: 12 },
+
+  myRequestsHeader: {
+    marginTop: 24,
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: Colors.textSecondary,
+    letterSpacing: 1.2,
+  },
+
   emptyCard: {
     backgroundColor: Colors.bgSecondary,
     borderRadius: 14,
@@ -552,22 +1100,126 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   emptyText: { fontSize: 14, color: Colors.textSecondary },
-  historyCard: {
+
+  requestProgressCard: {
     backgroundColor: Colors.bgSecondary,
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 16,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  historyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  historyLeft: { flex: 1 },
-  historyTitle: { fontSize: 15, fontWeight: '600', color: Colors.textPrimary },
-  historyMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 4 },
-  statusBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
-  statusText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  requestProgressTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  requestProgressInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  requestProgressTitle: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.textPrimary,
+  },
+  requestProgressMeta: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  stageBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  stageBadgeText: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+  },
 
-  // ─── Modal ─────────────────────────────────────────────────────
+  progressBarContainer: {
+    marginBottom: 4,
+  },
+  progressTrack: {
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 3,
+    overflow: 'visible',
+    position: 'relative',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  stageMarker: {
+    position: 'absolute',
+    top: -3,
+    marginLeft: -6,
+  },
+  stageMarkerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: Colors.bgSecondary,
+  },
+  stageLabelsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingHorizontal: 2,
+  },
+  stageLabelText: {
+    fontSize: 10,
+    fontWeight: '600' as const,
+    color: Colors.textTertiary,
+    letterSpacing: 0.3,
+  },
+
+  boardVoteRow: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.04)',
+  },
+  boardVoteText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+
+  decisionDetail: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.04)',
+  },
+  decisionIconRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  decisionText: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    flex: 1,
+    lineHeight: 20,
+  },
+  decisionMeta: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 8,
+    marginLeft: 30,
+  },
+  pendingDetailText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    flex: 1,
+    lineHeight: 18,
+  },
+
   modalContainer: { flex: 1, backgroundColor: Colors.bgPrimary },
   modalHeader: {
     flexDirection: 'row',
@@ -578,11 +1230,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: Colors.textPrimary },
+  modalTitle: { fontSize: 20, fontWeight: '700' as const, color: Colors.textPrimary },
   modalBody: { paddingHorizontal: 20, paddingTop: 20 },
   fieldLabel: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '600' as const,
     color: Colors.textSecondary,
     letterSpacing: 0.8,
     marginBottom: 8,
@@ -612,7 +1264,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.accentGold,
   },
   chipText: { fontSize: 13, color: Colors.textSecondary },
-  chipTextActive: { color: Colors.accentGold, fontWeight: '600' },
+  chipTextActive: { color: Colors.accentGold, fontWeight: '600' as const },
   estimateCard: {
     flexDirection: 'row',
     backgroundColor: 'rgba(201, 168, 76, 0.08)',
@@ -625,8 +1277,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(201, 168, 76, 0.2)',
   },
   estimateContent: { flex: 1 },
-  estimateLabel: { fontSize: 10, fontWeight: '600', color: Colors.textSecondary, letterSpacing: 0.8 },
-  estimateValue: { fontSize: 24, fontWeight: '700', color: Colors.accentGold, marginTop: 4 },
+  estimateLabel: { fontSize: 10, fontWeight: '600' as const, color: Colors.textSecondary, letterSpacing: 0.8 },
+  estimateValue: { fontSize: 24, fontWeight: '700' as const, color: Colors.accentGold, marginTop: 4 },
   estimateNote: { fontSize: 11, color: Colors.textTertiary, marginTop: 2 },
   warningBanner: {
     flexDirection: 'row',
@@ -647,7 +1299,7 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   submitText: {
-    fontWeight: '700',
+    fontWeight: '700' as const,
     fontSize: 15,
     color: Colors.bgPrimary,
     letterSpacing: 1,
