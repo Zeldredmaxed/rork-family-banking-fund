@@ -1,0 +1,15 @@
+{
+  "$schema": "https://rork.com/schema/rork.json",
+  "apps": [
+    {
+      "name": "Family Banking Fund",
+      "path": "expo",
+      "framework": "react-native"
+    },
+    {
+      "name": "Family Banking Fund",
+      "path": "expo",
+      "framework": "react-native"
+    }
+  ]
+}
