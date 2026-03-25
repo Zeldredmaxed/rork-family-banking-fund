@@ -14,7 +14,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   FileText,
-  TrendingUp,
   CalendarDays,
   BookOpen,
   BellRing,
@@ -24,6 +23,8 @@ import {
   Shield,
   Landmark,
   ShieldCheck,
+  BarChart3,
+  HelpCircle,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/colors';
@@ -63,11 +64,12 @@ export default function MoreScreen() {
   }, [logout]);
 
   const menuItems = [
-    { icon: FileText, label: 'My Documents', desc: 'Loan agreements, receipts', color: Colors.accentGold, route: '/more/documents' },
-    { icon: TrendingUp, label: 'Fund Health', desc: 'Total capital, distributions', color: '#22c55e', route: null },
-    { icon: CalendarDays, label: 'Payment Calendar', desc: 'Upcoming due dates', color: '#818cf8', route: null },
-    { icon: BookOpen, label: 'Fund Rules', desc: 'Bylaws, interest tiers', color: Colors.accentGold, route: '/more/fund-rules' },
-    { icon: BellRing, label: 'Notification Settings', desc: 'Manage alerts', color: '#f59e0b', route: null },
+    { icon: FileText, label: 'My Documents', desc: 'Loan agreements & e-signatures', color: Colors.accentGold, route: '/more/documents' },
+    { icon: BarChart3, label: 'Credit Score', desc: 'View & update your score', color: '#22c55e', route: '/more/credit-score' },
+    { icon: CalendarDays, label: 'Payment Calendar', desc: 'Upcoming due dates', color: '#818cf8', route: '/more/payment-calendar' },
+    { icon: BookOpen, label: 'Fund Rules', desc: 'Bylaws, interest tiers, standing', color: Colors.accentGold, route: '/more/fund-rules' },
+    { icon: BellRing, label: 'Notification Settings', desc: 'Manage alerts & preferences', color: '#f59e0b', route: '/more/notification-settings' },
+    { icon: HelpCircle, label: 'Help & FAQ', desc: 'Support resources', color: '#94a3b8', route: '/more/help' },
   ];
 
   return (

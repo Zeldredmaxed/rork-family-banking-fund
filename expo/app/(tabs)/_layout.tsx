@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { LayoutDashboard, CreditCard, FileText, MessageCircle, Menu } from "lucide-react-native";
+import { LayoutDashboard, CreditCard, FileText, MessageCircle, Mail, Menu } from "lucide-react-native";
 import React from "react";
 import { Colors } from "@/constants/colors";
 
@@ -44,10 +44,18 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="messages"
+        options={{
+          title: "Messages",
+          tabBarIcon: ({ color, size }) => <Mail size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="chat"
         options={{
           title: "Chat",
           tabBarIcon: ({ color, size }) => <MessageCircle size={size} color={color} />,
+          href: null,
         }}
       />
       <Tabs.Screen

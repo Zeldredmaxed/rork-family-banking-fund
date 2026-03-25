@@ -288,4 +288,13 @@ const styles = StyleSheet.create({
     color: Colors.accentGold,
     fontWeight: '600' as const,
   },
+  forgotLink: {
+    padding: 8,
+    marginBottom: 8,
+  },
+  forgotText: {
+    color: Colors.accentGold,
+    fontSize: 14,
+    fontWeight: '500' as const,
+  },
 });

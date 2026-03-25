@@ -14,6 +14,9 @@ export default function MoreLayout() {
       <Stack.Screen name="fund-rules" />
       <Stack.Screen name="documents" />
       <Stack.Screen name="help" />
+      <Stack.Screen name="payment-calendar" />
+      <Stack.Screen name="notification-settings" />
+      <Stack.Screen name="credit-score" />
       <Stack.Screen name="board-dashboard" />
       <Stack.Screen name="board-proposals" />
       <Stack.Screen name="board-history" />

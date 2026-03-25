@@ -184,3 +184,93 @@ export interface AdminLoan {
   loan_type: string;
   submitted: string;
 }
+
+export interface DMContact {
+  id: number;
+  name: string;
+  profile_image_url: string | null;
+  status: string;
+}
+
+export interface DMConversation {
+  member_id: number;
+  member_name: string;
+  profile_image_url: string | null;
+  last_message: string | null;
+  last_message_at: string | null;
+  unread_count: number;
+}
+
+export interface DMMessage {
+  id: number;
+  sender_id: number;
+  receiver_id: number;
+  content: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface MemberDocument {
+  id: number;
+  doc_type: string;
+  title: string;
+  status: 'unsigned' | 'signed' | 'expired';
+  created_at: string;
+  signed_at: string | null;
+  content_html?: string;
+}
+
+export interface CalendarEvent {
+  date: string;
+  type: 'contribution_due' | 'loan_payment' | 'contribution_paid' | 'loan_paid';
+  amount: number;
+  status: 'upcoming' | 'pending' | 'paid' | 'overdue';
+  loan_id?: number;
+}
+
+export interface CalendarMonth {
+  month: string;
+  events: CalendarEvent[];
+  total_due: number;
+}
+
+export interface FundRule {
+  category: string;
+  rules: Array<{
+    name: string;
+    value: string;
+    description?: string;
+  }>;
+}
+
+export interface MyStanding {
+  strike_count: number;
+  interest_tier: number;
+  interest_rate: number;
+  loan_eligible: boolean;
+  total_contributed: number;
+  contribution_threshold: number;
+  emergency_uses_remaining: number;
+}
+
+export interface NotificationSetting {
+  category: string;
+  label: string;
+  enabled: boolean;
+  mandatory: boolean;
+}
+
+export interface CreditScoreData {
+  score: number | null;
+  last_updated: string | null;
+  tier: number;
+  tier_label: string;
+}
+
+export interface CreditHistoryItem {
+  id: number;
+  score: number;
+  reported_at: string;
+  source: string;
+  notes?: string;
+}
