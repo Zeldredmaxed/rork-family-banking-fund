@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   PanResponder,
-  Animated,
   LayoutChangeEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -111,74 +110,92 @@ function CustomSlider({
   min: number;
   max: number;
 }) {
-  const trackWidth = useRef(0);
+  const trackRef = useRef<View>(null);
+  const trackWidthRef = useRef(0);
+  const trackPageXRef = useRef(0);
   const currentValue = useRef(value);
-  const thumbPosition = useRef(new Animated.Value(0)).current;
 
-  const updateThumbFromValue = useCallback((val: number, width: number) => {
-    const ratio = Math.max(0, Math.min(1, (val - min) / (max - min)));
-    thumbPosition.setValue(ratio * width);
-  }, [min, max, thumbPosition]);
+  const ratio = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  const fillPercent = `${ratio * 100}%`;
+
+  useCallback(() => {
+    currentValue.current = value;
+  }, [value]);
+
+  const measureTrack = useCallback(() => {
+    if (trackRef.current) {
+      trackRef.current.measureInWindow((x, _y, width) => {
+        if (width > 0) {
+          trackWidthRef.current = width;
+          trackPageXRef.current = x;
+        }
+      });
+    }
+  }, []);
 
   const onLayout = useCallback((e: LayoutChangeEvent) => {
-    trackWidth.current = e.nativeEvent.layout.width;
-    updateThumbFromValue(currentValue.current, trackWidth.current);
-  }, [updateThumbFromValue]);
+    trackWidthRef.current = e.nativeEvent.layout.width;
+    setTimeout(measureTrack, 50);
+  }, [measureTrack]);
+
+  const computeValueFromPageX = useCallback((pageX: number) => {
+    const width = trackWidthRef.current;
+    if (width <= 0) return currentValue.current;
+    const localX = pageX - trackPageXRef.current;
+    const r = Math.max(0, Math.min(1, localX / width));
+    return Math.round((min + r * (max - min)) / 1000) * 1000;
+  }, [min, max]);
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_evt, gestureState) => {
+        return Math.abs(gestureState.dx) > 2;
+      },
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (evt) => {
-        const x = evt.nativeEvent.locationX;
-        const ratio = Math.max(0, Math.min(1, x / trackWidth.current));
-        const newVal = Math.round((min + ratio * (max - min)) / 1000) * 1000;
+        measureTrack();
+        const newVal = computeValueFromPageX(evt.nativeEvent.pageX);
         currentValue.current = newVal;
-        thumbPosition.setValue(ratio * trackWidth.current);
         onValueChange(newVal);
         void Haptics.selectionAsync();
       },
       onPanResponderMove: (evt) => {
-        const x = evt.nativeEvent.locationX;
-        const ratio = Math.max(0, Math.min(1, x / trackWidth.current));
-        const newVal = Math.round((min + ratio * (max - min)) / 1000) * 1000;
+        const newVal = computeValueFromPageX(evt.nativeEvent.pageX);
         if (newVal !== currentValue.current) {
           currentValue.current = newVal;
           onValueChange(newVal);
         }
-        thumbPosition.setValue(ratio * trackWidth.current);
+      },
+      onPanResponderRelease: () => {
+        void Haptics.selectionAsync();
       },
     })
   ).current;
 
-  const fillWidth = thumbPosition.interpolate({
-    inputRange: [0, trackWidth.current || 1],
-    outputRange: ['0%', '100%'],
-    extrapolate: 'clamp',
-  });
-
   return (
     <View
+      ref={trackRef}
       style={sliderStyles.container}
       onLayout={onLayout}
       {...panResponder.panHandlers}
     >
       <View style={sliderStyles.track}>
-        <Animated.View
+        <View
           style={[
             sliderStyles.fill,
-            { width: fillWidth },
+            { width: fillPercent as any },
           ]}
         />
       </View>
-      <Animated.View
+      <View
         style={[
           sliderStyles.thumb,
-          { transform: [{ translateX: Animated.subtract(thumbPosition, 12) }] },
+          { left: fillPercent as any, marginLeft: -12 },
         ]}
       >
         <View style={sliderStyles.thumbInner} />
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -485,6 +502,23 @@ export default function RequestsScreen() {
           <View style={styles.sliderLabels}>
             <Text style={styles.sliderMinMax}>$0</Text>
             <Text style={styles.sliderMinMax}>$1M</Text>
+          </View>
+
+          <View style={styles.amountInputRow}>
+            <Text style={styles.amountInputPrefix}>$</Text>
+            <TextInput
+              style={styles.amountTextInput}
+              value={calcAmount > 0 ? String(calcAmount) : ''}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9]/g, '');
+                const num = Math.min(parseInt(cleaned) || 0, MAX_LOAN);
+                setCalcAmount(num);
+              }}
+              keyboardType="numeric"
+              placeholder="Type exact amount"
+              placeholderTextColor={Colors.textTertiary}
+              returnKeyType="done"
+            />
           </View>
 
           <View style={styles.calcRow}>
@@ -976,6 +1010,28 @@ const styles = StyleSheet.create({
   sliderMinMax: {
     fontSize: 11,
     color: Colors.textTertiary,
+  },
+  amountInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  amountInputPrefix: {
+    fontSize: 18,
+    fontWeight: '600' as const,
+    color: Colors.accentGold,
+    marginRight: 6,
+  },
+  amountTextInput: {
+    flex: 1,
+    fontSize: 16,
+    color: Colors.textPrimary,
+    paddingVertical: 12,
   },
   termRow: {
     flexDirection: 'row',
