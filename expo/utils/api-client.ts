@@ -6,7 +6,7 @@ import * as SecureStore from 'expo-secure-store';
  */
 const API_BASE_URL = 'https://web-production-085b1.up.railway.app';
 
-const TOKEN_KEY = 'auth_token';
+const TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
 const api = axios.create({
