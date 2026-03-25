@@ -47,7 +47,16 @@ export default function LoginScreen() {
       await login({ email: email.trim(), password });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Login failed. Please check your credentials.';
+      console.log('[Login] Error caught:', err);
+      let message = 'Login failed. Please check your credentials.';
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { data?: { detail?: string }; status?: number } };
+        console.log('[Login] Response status:', axiosErr.response?.status);
+        console.log('[Login] Response data:', JSON.stringify(axiosErr.response?.data));
+        message = axiosErr.response?.data?.detail ?? message;
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       setError(message);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }

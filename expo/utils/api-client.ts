@@ -9,6 +9,14 @@ const API_BASE_URL = 'https://web-production-085b1.up.railway.app';
 const TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
+const AUTH_ENDPOINTS = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
+];
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
@@ -24,7 +32,16 @@ export async function getToken(): Promise<string | null> {
 }
 
 export async function setToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
+  try {
+    if (!token || typeof token !== 'string') {
+      console.log('[api-client] setToken called with invalid value:', token);
+      return;
+    }
+    await SecureStore.setItemAsync(TOKEN_KEY, token);
+    console.log('[api-client] Access token stored successfully');
+  } catch (e) {
+    console.log('[api-client] Failed to store access token:', e);
+  }
 }
 
 export async function getRefreshToken(): Promise<string | null> {
@@ -32,21 +49,46 @@ export async function getRefreshToken(): Promise<string | null> {
 }
 
 export async function setRefreshToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token);
+  try {
+    if (!token || typeof token !== 'string') {
+      console.log('[api-client] setRefreshToken called with invalid value:', token);
+      return;
+    }
+    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token);
+    console.log('[api-client] Refresh token stored successfully');
+  } catch (e) {
+    console.log('[api-client] Failed to store refresh token:', e);
+  }
 }
 
 export async function clearTokens(): Promise<void> {
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  try {
+    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    await SecureStore.deleteItemAsync('member_id');
+    await SecureStore.deleteItemAsync('member_name');
+    await SecureStore.deleteItemAsync('is_board_member');
+    await SecureStore.deleteItemAsync('is_admin');
+    console.log('[api-client] All tokens cleared');
+  } catch (e) {
+    console.log('[api-client] Error clearing tokens:', e);
+  }
 }
 
 // ─── Request Interceptor ───────────────────────────────────────────
 
+function isAuthEndpoint(url?: string): boolean {
+  if (!url) return false;
+  return AUTH_ENDPOINTS.some((ep) => url.includes(ep));
+}
+
 api.interceptors.request.use(
   async (config) => {
-    const token = await getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    if (!isAuthEndpoint(config.url)) {
+      const token = await getToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     }
     return config;
   },
@@ -68,7 +110,11 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !isAuthEndpoint(originalRequest.url)
+    ) {
       if (isRefreshing) {
         return new Promise((resolve) => {
           refreshSubscribers.push((token: string) => {
