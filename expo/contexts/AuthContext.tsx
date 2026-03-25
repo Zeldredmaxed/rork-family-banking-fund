@@ -42,11 +42,14 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       return response.data as AuthTokens;
     },
     onSuccess: async (data) => {
+      console.log('Login response keys:', Object.keys(data));
       await setToken(data.access_token);
-      await setRefreshToken(data.refresh_token);
+      if (data.refresh_token) {
+        await setRefreshToken(data.refresh_token);
+      }
       await SecureStore.setItemAsync('member_id', String(data.member_id));
-      await SecureStore.setItemAsync('member_name', data.name);
-      await SecureStore.setItemAsync('is_board_member', String(data.is_board_member));
+      await SecureStore.setItemAsync('member_name', data.name ?? '');
+      await SecureStore.setItemAsync('is_board_member', String(data.is_board_member ?? false));
       await SecureStore.setItemAsync('is_admin', String(data.is_admin ?? false));
       const meResponse = await api.get('/api/auth/me');
       setUser(meResponse.data);
@@ -66,10 +69,15 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       return response.data as AuthTokens;
     },
     onSuccess: async (data) => {
+      console.log('Register response keys:', Object.keys(data));
       await setToken(data.access_token);
-      await setRefreshToken(data.refresh_token);
+      if (data.refresh_token) {
+        await setRefreshToken(data.refresh_token);
+      }
       await SecureStore.setItemAsync('member_id', String(data.member_id));
-      await SecureStore.setItemAsync('member_name', data.name);
+      await SecureStore.setItemAsync('member_name', data.name ?? '');
+      await SecureStore.setItemAsync('is_board_member', String(data.is_board_member ?? false));
+      await SecureStore.setItemAsync('is_admin', String(data.is_admin ?? false));
       const meResponse = await api.get('/api/auth/me');
       setUser(meResponse.data);
       setIsAuthenticated(true);

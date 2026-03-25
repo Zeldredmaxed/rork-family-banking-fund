@@ -21,12 +21,12 @@ export interface MemberProfile {
 
 export interface AuthTokens {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   token_type: 'bearer';
   member_id: number;
   name: string;
   is_board_member: boolean;
-  is_admin: boolean;
+  is_admin?: boolean;
 }
 
 export interface LoanApplication {
