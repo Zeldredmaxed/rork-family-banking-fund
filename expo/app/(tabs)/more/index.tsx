@@ -22,6 +22,8 @@ import {
   ChevronRight,
   Settings,
   Shield,
+  Landmark,
+  ShieldCheck,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/colors';
@@ -42,6 +44,7 @@ export default function MoreScreen() {
   const lastName = user?.last_name ?? '';
   const initials = getInitials(firstName || '?', lastName || '?');
   const isBoardMember = user?.is_board_member ?? false;
+  const isAdmin = user?.is_admin ?? false;
   const joinDate = user?.join_date ? formatDate(user.join_date) : 'N/A';
   const email = user?.email ?? '';
 
@@ -98,6 +101,58 @@ export default function MoreScreen() {
           <Text style={styles.memberSince}>FAMILY MEMBER SINCE {joinDate.toUpperCase()}</Text>
           <Text style={styles.profileEmail}>{email}</Text>
         </View>
+
+        {(isBoardMember || isAdmin) && (
+          <>
+            <Text style={styles.sectionLabel}>GOVERNANCE</Text>
+            <View style={styles.portalCards}>
+              {isBoardMember && (
+                <TouchableOpacity
+                  style={styles.portalCard}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    router.push('/more/board-dashboard' as never);
+                  }}
+                >
+                  <LinearGradient
+                    colors={['#1a1a2e', '#12121a']}
+                    style={styles.portalGradient}
+                  >
+                    <View style={styles.portalIconWrap}>
+                      <Landmark size={24} color={Colors.accentGold} />
+                    </View>
+                    <Text style={styles.portalTitle}>Board Portal</Text>
+                    <Text style={styles.portalDesc}>Proposals, voting & oversight</Text>
+                    <ChevronRight size={16} color={Colors.accentGold} style={styles.portalArrow} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+              {isAdmin && (
+                <TouchableOpacity
+                  style={styles.portalCard}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    router.push('/more/admin-dashboard' as never);
+                  }}
+                >
+                  <LinearGradient
+                    colors={['#1a1a2e', '#12121a']}
+                    style={styles.portalGradient}
+                  >
+                    <View style={[styles.portalIconWrap, { backgroundColor: 'rgba(34,197,94,0.12)' }]}>
+                      <ShieldCheck size={24} color={Colors.success} />
+                    </View>
+                    <Text style={styles.portalTitle}>Admin Panel</Text>
+                    <Text style={styles.portalDesc}>Members, funds & system</Text>
+                    <ChevronRight size={16} color={Colors.success} style={styles.portalArrow} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+            </View>
+          </>
+        )}
 
         <Text style={styles.sectionLabel}>PORTFOLIO MANAGEMENT</Text>
 
@@ -439,5 +494,47 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 13,
     color: Colors.textTertiary,
+  },
+  portalCards: {
+    gap: 12,
+    marginBottom: 24,
+  },
+  portalCard: {
+    borderRadius: 16,
+    overflow: 'hidden' as const,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  portalGradient: {
+    padding: 20,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    flexWrap: 'wrap' as const,
+  },
+  portalIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(201,168,76,0.12)',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginRight: 14,
+  },
+  portalTitle: {
+    fontSize: 17,
+    fontWeight: '700' as const,
+    color: Colors.textPrimary,
+  },
+  portalDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    width: '100%' as const,
+    marginTop: 2,
+    marginLeft: 62,
+  },
+  portalArrow: {
+    position: 'absolute' as const,
+    right: 20,
+    top: 28,
   },
 });

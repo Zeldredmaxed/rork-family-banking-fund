@@ -5,6 +5,7 @@ export interface MemberProfile {
   email: string;
   phone: string | null;
   is_board_member: boolean;
+  is_admin: boolean;
   status: 'active' | 'soft_ban' | 'full_ban' | 'indefinite_ban' | 'locked';
   credit_score: number | null;
   credit_report_date: string | null;
@@ -25,6 +26,7 @@ export interface AuthTokens {
   member_id: number;
   name: string;
   is_board_member: boolean;
+  is_admin: boolean;
 }
 
 export interface LoanApplication {
@@ -108,6 +110,77 @@ export interface Announcement {
   id: number;
   title: string;
   message: string;
+  content?: string;
   created_at: string;
+  is_pinned?: boolean;
   type?: string;
+}
+
+export interface BoardProposal {
+  loan_id: number;
+  applicant_name: string;
+  applicant_id: number;
+  amount: number;
+  interest_rate: number;
+  interest_tier: number;
+  term_months: number;
+  monthly_payment: number;
+  loan_type: 'standard' | 'emergency';
+  collateral: string;
+  unanimous_required: boolean;
+  submitted_at: string;
+  votes: {
+    total_cast: number;
+    total_required: number;
+    approvals: number;
+    denials: number;
+    abstentions: number;
+    remaining: number;
+  };
+  my_vote: {
+    has_voted: boolean;
+    decision: 'approve' | 'deny' | 'abstain' | null;
+  };
+}
+
+export interface BoardMember {
+  id: number;
+  name: string;
+  status: string;
+  is_board_member: boolean;
+  is_admin?: boolean;
+  email?: string;
+  phone?: string | null;
+  monthly_contribution: number;
+  total_contributed: number;
+  loan_access_unlocked: boolean;
+  credit_score: number | null;
+  strike_count: number;
+  active_loans: number;
+}
+
+export interface BoardMeeting {
+  id: number;
+  subject: string;
+  agenda: string;
+  requested_by: string;
+  preferred_date: string | null;
+  scheduled_date: string | null;
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled';
+  submitted: string;
+}
+
+export interface AdminLoan {
+  id: number;
+  member_id: number;
+  member_name: string;
+  amount: number;
+  status: string;
+  interest_rate: number;
+  interest_tier: number;
+  term_months: number;
+  monthly_payment: number;
+  remaining_balance: number;
+  loan_type: string;
+  submitted: string;
 }
